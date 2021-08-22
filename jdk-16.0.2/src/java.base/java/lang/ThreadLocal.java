@@ -339,13 +339,13 @@ public class ThreadLocal<T> {
         /**
          * The initial capacity -- MUST be a power of two.
          */
-        private static final int INITIAL_CAPACITY = 16;
+        private static final int INITIAL_CAPACITY = 16; // 初始容量，必须是 2 的幂.
 
         /**
          * The table, resized as necessary.
          * table.length MUST always be a power of two.
          */
-        private Entry[] table;
+        private Entry[] table; // 存储当前线程所有线程局部变量数据的表格，大小为 2 的幂
 
         /**
          * The number of entries in the table.
@@ -430,12 +430,12 @@ public class ThreadLocal<T> {
          * @param  key the thread local object
          * @return the entry associated with key, or null if no such
          */
-        private Entry getEntry(ThreadLocal<?> key) {
-            int i = key.threadLocalHashCode & (table.length - 1);
+        private Entry getEntry(ThreadLocal<?> key) {              // 查询 ThreadLocal 对应的 Entry 对象.
+            int i = key.threadLocalHashCode & (table.length - 1); // 1. 快速查找：根据 ThreadLocal 哈希码和表格容量求得 Entry 下标，进行快速查找.
             Entry e = table[i];
-            if (e != null && e.refersTo(key))
+            if (e != null && e.refersTo(key))                     // 2. 快速查找成功：判断 Entry 是否与 ThreadLocal 相对应, 如果是直接返回 Entry.
                 return e;
-            else
+            else  // 3. 快速查找失败（即出现散列冲突）：进行线性探测（Linear Probing），以 i 为起点向下遍历数组直至查找出与当前 ThreadLocal 匹配的 Entry.
                 return getEntryAfterMiss(key, i, e);
         }
 
@@ -455,7 +455,7 @@ public class ThreadLocal<T> {
             while (e != null) {
                 if (e.refersTo(key))
                     return e;
-                if (e.refersTo(null))
+                if (e.refersTo(null)) // 查找过程中查找到线程局部变量已被清理的 Entry 时清除陈旧的 Entry.
                     expungeStaleEntry(i);
                 else
                     i = nextIndex(i, len);
@@ -484,12 +484,12 @@ public class ThreadLocal<T> {
             for (Entry e = tab[i];
                  e != null;
                  e = tab[i = nextIndex(i, len)]) {
-                if (e.refersTo(key)) {
+                if (e.refersTo(key)) {  // 如果找到 ThreadLocal 对应 Entry 直接设置给定线程局部变量(value).
                     e.value = value;
                     return;
                 }
 
-                if (e.refersTo(null)) {
+                if (e.refersTo(null)) {  // 如果找到陈旧的 Entry，则将该陈旧条目替换为 ThreadLocal 与 value 组成的新条目.
                     replaceStaleEntry(key, value, i);
                     return;
                 }
@@ -497,7 +497,7 @@ public class ThreadLocal<T> {
 
             tab[i] = new Entry(key, value);
             int sz = ++size;
-            if (!cleanSomeSlots(i, sz) && sz >= threshold)
+            if (!cleanSomeSlots(i, sz) && sz >= threshold) // 执行对数扫描, 清理陈旧条目, 如果未清理任何陈旧条目, 且已达容量上限则进行如下操作：
                 rehash();
         }
 
@@ -539,12 +539,12 @@ public class ThreadLocal<T> {
             Entry[] tab = table;
             int len = tab.length;
             Entry e;
-
+            // 向前扫描发现的第一个已过期的条目位置. 后续会根据该位置清理表格过期条目，以避免由于垃圾收集器成束地释放引用（每当收集器运行时）而导致的持续增量重新散列.
             // Back up to check for prior stale entry in current run.
             // We clean out whole runs at a time to avoid continual
             // incremental rehashing due to garbage collector freeing
             // up refs in bunches (i.e., whenever the collector runs).
-            int slotToExpunge = staleSlot;
+            int slotToExpunge = staleSlot; // 从该位置向前查找最后一个已过期的条目位置.
             for (int i = prevIndex(staleSlot, len);
                  (e = tab[i]) != null;
                  i = prevIndex(i, len))
@@ -561,19 +561,19 @@ public class ThreadLocal<T> {
                 // The newly stale slot, or any other stale slot
                 // encountered above it, can then be sent to expungeStaleEntry
                 // to remove or rehash all of the other entries in run.
-                if (e.refersTo(key)) {
+                if (e.refersTo(key)) { // 如果找到 ThreadLocal 对应键，则将其与陈旧条目交换以维护哈希表顺序.
                     e.value = value;
 
                     tab[i] = tab[staleSlot];
                     tab[staleSlot] = e;
-
+                    // slotToExpunge == staleSlot 即 staleSlot 处向前没有陈旧条目, 此时将清理基准位置修改为 i.
                     // Start expunge at preceding stale entry if it exists
                     if (slotToExpunge == staleSlot)
                         slotToExpunge = i;
-                    cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);
+                    cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);  // 调用 expungeStaleEntry 向后清理, 调用 cleanSomeSlots 向前清理.
                     return;
                 }
-
+                // 如果向后扫描时没有找到陈旧条目，则在向前扫描时看到的第一个陈旧条目是当前存在的第一个陈旧条目. 此时调整要清理基准位置为 i.
                 // If we didn't find stale entry on backward scan, the
                 // first stale entry seen while scanning for key is the
                 // first still present in the run.
@@ -581,11 +581,11 @@ public class ThreadLocal<T> {
                     slotToExpunge = i;
             }
 
-            // If key not found, put new entry in stale slot
+            // If key not found, put new entry in stale slot 如果未找到 ThreadLocal 对应 Entry，则将新条目放入陈旧插槽中.
             tab[staleSlot].value = null;
             tab[staleSlot] = new Entry(key, value);
 
-            // If there are any other stale entries in run, expunge them
+            // If there are any other stale entries in run, expunge them 如果有任何其他陈旧条目，则删除这些陈旧条目.
             if (slotToExpunge != staleSlot)
                 cleanSomeSlots(expungeStaleEntry(slotToExpunge), len);
         }
@@ -605,7 +605,7 @@ public class ThreadLocal<T> {
             Entry[] tab = table;
             int len = tab.length;
 
-            // expunge entry at staleSlot
+            // expunge entry at staleSlot 清理陈旧条目.
             tab[staleSlot].value = null;
             tab[staleSlot] = null;
             size--;
@@ -613,15 +613,15 @@ public class ThreadLocal<T> {
             // Rehash until we encounter null
             Entry e;
             int i;
-            for (i = nextIndex(staleSlot, len);
-                 (e = tab[i]) != null;
+            for (i = nextIndex(staleSlot, len); // 以 staleSlot 为起点向后扫描 Entry 数组, 遇到为 null 的位置结束扫描.
+                 (e = tab[i]) != null;          // 扫描过程中会清理过期的 Entry，并对未过期 Entry 重新 Hash.
                  i = nextIndex(i, len)) {
                 ThreadLocal<?> k = e.get();
-                if (k == null) {
+                if (k == null) { // 如果 ThreadLocal 已被清理，则清理当前 Entry 对象.
                     e.value = null;
                     tab[i] = null;
                     size--;
-                } else {
+                } else {      // 重新 hash, 出现散列冲突时依然采用线性探测法查找数组中可用的位置.
                     int h = k.threadLocalHashCode & (len - 1);
                     if (h != i) {
                         tab[i] = null;
@@ -661,9 +661,9 @@ public class ThreadLocal<T> {
          *
          * @return true if any stale entries have been removed.
          */
-        private boolean cleanSomeSlots(int i, int n) {
-            boolean removed = false;
-            Entry[] tab = table;
+        private boolean cleanSomeSlots(int i, int n) { // 启发式扫描一些单元格以查找过期的条目。 在添加新元素或删除另一个陈旧元素时调用.
+            boolean removed = false;                   // 执行对数扫描(假设起点为 10, 则扫描下标为 10, 5, 2, 1, 0)
+            Entry[] tab = table;                       // 作为不扫描（快速但保留垃圾）和扫描次数与元素数量成正比之间的平衡，这将找到所有垃圾但会导致某些插入花费 O(n) 时间
             int len = tab.length;
             do {
                 i = nextIndex(i, len);
@@ -673,7 +673,7 @@ public class ThreadLocal<T> {
                     removed = true;
                     i = expungeStaleEntry(i);
                 }
-            } while ( (n >>>= 1) != 0);
+            } while ( (n >>>= 1) != 0); // 将 n 按位右移补零（相当于每次将 n 除以 2）直至为 0 时结束循环.
             return removed;
         }
 
