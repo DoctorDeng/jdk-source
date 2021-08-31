@@ -6379,5 +6379,4 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         // Eager class load observed to help JIT during startup
         ensureLoaded = ReservationNode.class;
     }
-
 }
