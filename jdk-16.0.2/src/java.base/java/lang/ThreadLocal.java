@@ -317,7 +317,7 @@ public class ThreadLocal<T> {
      * the table starts running out of space.
      */
     static class ThreadLocalMap {
-
+        // Entry 继承至 WeakReference 这样 Entry 对 ThreadLocal 是弱引用. ThreadLocal 生命周期比单个线程长, Entry 对 ThreadLocal 为弱引用可以让持有 ThreadLocalMap 的 Thread 对象能够被垃圾回收.
         /**
          * The entries in this hash map extend WeakReference, using
          * its main ref field as the key (which is always a
