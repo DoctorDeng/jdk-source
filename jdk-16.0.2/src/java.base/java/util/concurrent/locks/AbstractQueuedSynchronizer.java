@@ -445,8 +445,11 @@ public abstract class AbstractQueuedSynchronizer
      */
 
     // Node status bits, also used as argument and return values
-    static final int WAITING   = 1;          // must be 1         节点状态：等待
-    static final int CANCELLED = 0x80000000; // must be negative  节点状态：已取消
+    // 1. 节点状态 < 0: 此时节点对应线程获取锁成功、或已取消获取锁.
+    // 2. 节点状态 = 0: 节点刚入队（CLH 队列）或者对应线程从休眠状态被唤醒（此时状态会被重置为 0）时状态都为 0, 该状态是一个瞬时态，最终会转换为 WAITING 或 COND.
+    // 3. 节点状态 > 0: 此时线程正在等待获取锁，或者在条件变量上等待.
+    static final int WAITING   = 1;          // must be 1           节点状态：等待锁
+    static final int CANCELLED = 0x80000000; // must be negative    节点状态：已取消
     static final int COND      = 2;          // in a condition wait 节点状态：条件变量等待
 
     /** CLH Nodes */
@@ -627,7 +630,7 @@ public abstract class AbstractQueuedSynchronizer
     /**
      * Main acquire method, invoked by all exported acquire methods.
      *
-     * @param node null unless a reacquiring Condition 一般为 null 除非获取 Condition
+     * @param node null unless a reacquiring Condition 一般为 null 除非在 Condition 上等待
      * @param arg the acquire argument
      * @param shared true if shared mode else exclusive
      * @param interruptible if abort and return negative on interrupt
@@ -655,7 +658,7 @@ public abstract class AbstractQueuedSynchronizer
          *  else if WAITING status not set, set and retry
          *  else park and clear WAITING status, and check cancellation
          */
-        // 1. 如果节点第一次，确保头节点（head）稳定，否则确保有效的前驱节点
+        // 1. 如果节点是第一个节点，确保头节点（head）稳定，否则确保节点存在有效的前驱节点
         // 2. 如果节点是第一个或尚未入队，则尝试获取锁.
         // 3. 如果节点未创建则创建它
         // 4. 如果尚未入队，则尝试入队一次
@@ -663,15 +666,17 @@ public abstract class AbstractQueuedSynchronizer
         // 6. 如果节点状态为初始状态（即 0）将其设置为 WAITING 状态
         // 7. 休眠当前线程. 如果线程被唤醒，清除等待状态，并检查是否取消获取锁.
         for (;;) {
-            // 1. 节点不为 null（即不是新线程尝试获取锁）时，如果当前节点不为头节点且其前驱节点也不为头节点时：
+            // 1. 如果节点是第一个节点，确保头节点（head）稳定，否则确保节点存在有效的前驱节点
             if (!first                                                    // first == false 第一次
                     && (pred = (node == null) ? null : node.prev) != null // 节点前驱不为 null(节点不为头节点)
                     && !(first = (head == pred))) {                       // 前驱不为头节点
-                // 如果前驱节点状态小于 0 （已取消或已获得锁）清理 CLH 队列中已被取消的节点
+                // 1.1 如果前驱节点状态小于 0 （已取消或已获得锁）清理 CLH 队列中已被取消的节点，并跳过当前循环.
                 if (pred.status < 0) {
                     cleanQueue();           // predecessor cancelled
                     continue;
-                } else if (pred.prev == null) {
+                }
+                // 1.2 节点前驱节点的前驱节点为头节点时，跳过当前循环.
+                else if (pred.prev == null) {
                     // 主动告知运行时当前线程正在自旋进行忙等待，便于运行时优化自旋性能.
                     Thread.onSpinWait();    // ensure serialization
                     continue;
@@ -692,7 +697,7 @@ public abstract class AbstractQueuedSynchronizer
                     throw ex;
                 }
                 if (acquired) {
-                    // 如果获取到锁且是节点是第一个节点（即节点前驱为虚拟的头节点），则将当前节点置为头节点，并清除节点绑定的线程.
+                    // 如果获取到锁且是节点是第一个节点（即节点前驱为虚拟的头节点），则将当前节点置为头节点.
                     if (first) {
                         node.prev = null;
                         head = node;
@@ -715,7 +720,7 @@ public abstract class AbstractQueuedSynchronizer
                 else
                     node = new ExclusiveNode();
             }
-            // 4. 如果尚未入队，则尝试入队一次
+            // 4. 如果尚未入队，则尝试入队一次.
             else if (pred == null) {          // try to enqueue
                 node.waiter = current;
                 Node t = tail;
@@ -730,7 +735,7 @@ public abstract class AbstractQueuedSynchronizer
                 else
                     t.next = node;
             }
-            // 5. 如果从 LockSupport.park 唤醒，重试（最多 postSpins 次）
+            // 5. 如果从 LockSupport.park 唤醒，重试（最多 postSpins 次）.
             else if (first && spins != 0) {
                 --spins;                        // reduce unfairness on rewaits
                 Thread.onSpinWait();
