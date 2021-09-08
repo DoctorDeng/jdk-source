@@ -1305,6 +1305,7 @@ public abstract class AbstractQueuedSynchronizer
      *         is at the head of the queue or the queue is empty
      * @since 1.7
      */
+    // 查询是否有任何线程等待获取的时间比当前线程长.
     public final boolean hasQueuedPredecessors() {
         Thread first = null; Node h, s;
         if ((h = head) != null && ((s = h.next) == null ||
