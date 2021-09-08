@@ -445,8 +445,8 @@ public abstract class AbstractQueuedSynchronizer
      */
 
     // Node status bits, also used as argument and return values
-    // 1. 节点状态 < 0: 此时节点对应线程获取锁成功、或已取消获取锁.
-    // 2. 节点状态 = 0: 节点刚入队（CLH 队列）或者对应线程从休眠状态被唤醒（此时状态会被重置为 0）时状态都为 0, 该状态是一个瞬时态，最终会转换为 WAITING 或 COND.
+    // 1. 节点状态 < 0: 此时节点对应线程 acquire 成功、或已取消 acquire.
+    // 2. 节点状态 = 0: 节点的初始状态，当节点刚入队（CLH 队列）或者对应线程从休眠状态被唤醒（此时状态会被重置为 0）时状态都为 0, 该状态是一个瞬时态.
     // 3. 节点状态 > 0: 此时线程正在等待获取锁，或者在条件变量上等待.
     static final int WAITING   = 1;          // must be 1           节点状态：等待
     static final int CANCELLED = 0x80000000; // must be negative    节点状态：已取消
@@ -1527,6 +1527,7 @@ public abstract class AbstractQueuedSynchronizer
                 ConditionNode next = first.nextWaiter;
                 if ((firstWaiter = next) == null)
                     lastWaiter = null;
+                // 当节点依然在条件变量上等待时才进行入队操作（即将其添加到同步队列中）.
                 if ((first.getAndUnsetStatus(COND) & COND) != 0) {
                     enqueue(first);
                     if (!all)
@@ -1678,28 +1679,49 @@ public abstract class AbstractQueuedSynchronizer
          * Implements interruptible condition wait.
          * <ol>
          * <li>If current thread is interrupted, throw InterruptedException.
+         *     <br>如果当前线程被中断，则抛出 InterruptedException
+         *
          * <li>Save lock state returned by {@link #getState}.
+         *     <br>保存由 {@link #getState} 返回的锁状态.
+         *
          * <li>Invoke {@link #release} with saved state as argument,
          *     throwing IllegalMonitorStateException if it fails.
+         *     <br>以保存的状态作为参数调用 {@link #release} ，如果失败则抛出 IllegalMonitorStateException.
+         *
          * <li>Block until signalled or interrupted.
+         *     <br>阻塞直到发出信号或被中断.
+         *
          * <li>Reacquire by invoking specialized version of
          *     {@link #acquire} with saved state as argument.
+         *     <br>以保存的状态作为参数重新调用特殊版本的 {@link #acquire}.
+         *
          * <li>If interrupted while blocked in step 4, throw InterruptedException.
+         *     <br>如果在步骤 4 中被阻塞时被中断，则抛出 InterruptedException.
          * </ol>
          */
+        // 实现可中断条件等待, 大致流程如下：
+        // 1. 将线程对应节点添加到条件变量等待队列尾部, 并将节点状态设置为: 3, 最后释放线程持有的锁.
+        // 2. 以自旋的方式在条件变量上等待, 当条件变量的 sigal、signalAll 被调用或线程被中断时会退出自旋, 另外自旋时还会进行如下处理：
+        //    2.1 自旋过程中如果线程被中断，且线程依然在条件变量上等待则退出自旋.
+        //    2.2 如果线程未中断、状态不为 0、WAITING 或 CANCELLED 且线程为 ForkJoinWorkerThread 则运行 ForkJoinPool 中给定的阻塞任务（用于 ForkJoinPool）.
+        //    2.3 如果 2.1 和 2.2 条件都不成立则进行忙等待.
+        // 3. 自旋结束后线程已满足 acquire 条件，此时将其节点状态重置为 0, 然后调用 acquire 方法进行 acquire 操作.
+        // 4. acquire 成功后根据线程在 await 期间是否被中断进行不同处理：
+        //    4.1 如果线程在条件变量等待时被中断, 此时需要将对应条件变量节点从条件变量队列中移除.
+        //    4.2 如果线程中断时不在条件变量上等待，则主动中断当前线程.
         public final void await() throws InterruptedException {
             if (Thread.interrupted())
                 throw new InterruptedException();
             ConditionNode node = new ConditionNode();
-            // 让持有锁的当前线程释放锁并将其添加到条件变量等待队列中，同时还将节点状态设置为 3.
+            // 1. 让持有锁的当前线程释放锁并将其添加到条件变量等待队列中，同时还将节点状态设置为 3.
             int savedState = enableWait(node);
             LockSupport.setCurrentBlocker(this); // for back-compatibility
             boolean interrupted = false, cancelled = false;
 
-            // 当节点未准备好重新获取锁时（即节点不在 CLH 队列中）：
-            // 1. 如果线程被中断且在依然条件变量上等待直接退出该循环.
-            // 2. 如果线程未中断且状态不为 0、WAITING 或 CANCELLED 运行 ForkJoinPool 中给定的阻塞任务.
-            // 3. 否则自旋等待.
+            // 2. 当节点未准备好重新获取锁时（即节点不在 CLH 队列中）进行自旋等待：
+            //    2.1 自旋过程中如果线程被中断，且线程依然在条件变量上等待则退出自旋.
+            //    2.2 如果线程未中断、状态不为 0、WAITING 或 CANCELLED 且线程为 ForkJoinWorkerThread 则运行 ForkJoinPool 中给定的阻塞任务（用于 ForkJoinPool）.
+            //    2.3 如果 2.1 和 2.2 条件都不成立则进行忙等待.
             while (!canReacquire(node)) {
                 if (interrupted |= Thread.interrupted()) {
                     if (cancelled = (node.getAndUnsetStatus(COND) & COND) != 0)
@@ -1713,11 +1735,11 @@ public abstract class AbstractQueuedSynchronizer
                 } else
                     Thread.onSpinWait();    // awoke while enqueuing
             }
-            // 当节点处于 CLH 队列中时（线程被中断、或通过 signal、signalAll 被重新添加 CLH 队列中) 尝试 acquire.
+            // 3. 自旋结束后线程已满足 acquire 条件，此时将其节点状态重置为 0, 然后调用 acquire 方法进行 acquire 操作.
             LockSupport.setCurrentBlocker(null);
-            // 将节点状态重置为 0 然后尝试 acquire.
             node.clearStatus();
             acquire(node, savedState, false, false, false, 0L);
+            // 4. acquire 成功后根据线程在 await 期间是否被中断进行不同处理：
             if (interrupted) {
                 // 如果线程在条件变量上等待时被中断，从条件变量队列中取消当前节点和其他非等待节点的链接.
                 if (cancelled) {
