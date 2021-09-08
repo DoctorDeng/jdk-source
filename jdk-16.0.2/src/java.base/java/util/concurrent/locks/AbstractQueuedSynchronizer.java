@@ -448,7 +448,7 @@ public abstract class AbstractQueuedSynchronizer
     // 1. 节点状态 < 0: 此时节点对应线程获取锁成功、或已取消获取锁.
     // 2. 节点状态 = 0: 节点刚入队（CLH 队列）或者对应线程从休眠状态被唤醒（此时状态会被重置为 0）时状态都为 0, 该状态是一个瞬时态，最终会转换为 WAITING 或 COND.
     // 3. 节点状态 > 0: 此时线程正在等待获取锁，或者在条件变量上等待.
-    static final int WAITING   = 1;          // must be 1           节点状态：等待锁
+    static final int WAITING   = 1;          // must be 1           节点状态：等待
     static final int CANCELLED = 0x80000000; // must be negative    节点状态：已取消
     static final int COND      = 2;          // in a condition wait 节点状态：条件变量等待
 
@@ -493,6 +493,7 @@ public abstract class AbstractQueuedSynchronizer
 
     static final class ConditionNode extends Node
         implements ForkJoinPool.ManagedBlocker {
+        // 下一个条件变量节点.
         ConditionNode nextWaiter;            // link to next waiting node
 
         /**
@@ -513,6 +514,7 @@ public abstract class AbstractQueuedSynchronizer
     /**
      * Head of the wait queue, lazily initialized.
      */
+    // CLH 队列头节点, 为虚拟节点不存储实际数据.
     private transient volatile Node head;
 
     /**
@@ -523,7 +525,8 @@ public abstract class AbstractQueuedSynchronizer
     /**
      * The synchronization state.
      */
-    private volatile int state; // 同步器状态位.
+    // 同步状态
+    private volatile int state;
 
     /**
      * Returns the current value of synchronization state.
@@ -575,6 +578,7 @@ public abstract class AbstractQueuedSynchronizer
      * Enqueues the node unless null. (Currently used only for
      * ConditionNodes; other cases are interleaved with acquires.)
      */
+    // 将节点入队，除非为空。（目前仅用于 ConditionNodes）
     final void enqueue(Node node) {
         if (node != null) {
             for (;;) {
@@ -584,6 +588,7 @@ public abstract class AbstractQueuedSynchronizer
                     tryInitializeHead();
                 else if (casTail(t, node)) {
                     t.next = node;
+                    // 如果节点前驱节点状态小于 0 则直接唤醒节点对应线程.
                     if (t.status < 0)          // wake up to clean link
                         LockSupport.unpark(node.waiter);
                     break;
@@ -641,7 +646,7 @@ public abstract class AbstractQueuedSynchronizer
     final int acquire(Node node, int arg, boolean shared,
                       boolean interruptible, boolean timed, long time) {
         Thread current = Thread.currentThread();
-        // 第一个线程的自旋或重试次数.
+        // 线程的自旋或重试次数.
         byte spins = 0, postSpins = 0;   // retries upon unpark of first thread
         // interrupted：是否中断，first：传入的 node 是否是第一个节点
         boolean interrupted = false, first = false;
@@ -658,19 +663,19 @@ public abstract class AbstractQueuedSynchronizer
          *  else if WAITING status not set, set and retry
          *  else park and clear WAITING status, and check cancellation
          */
-        // 1. 如果节点是第一个节点，确保头节点（head）稳定，否则确保节点存在有效的前驱节点
-        // 2. 如果节点是第一个或尚未入队，则尝试获取锁.
+        // 1. 如果节点不是 CLH 队列第一个节点，确保该节点存在有效的前驱节点
+        // 2. 如果节点是第一个或尚未入队，则尝试 acquire
         // 3. 如果节点未创建则创建它
-        // 4. 如果尚未入队，则尝试入队一次
+        // 4. 如果节点尚未入队，则尝试入队一次
         // 5. 如果从 LockSupport.park 唤醒，重试（最多 postSpins 次）
         // 6. 如果节点状态为初始状态（即 0）将其设置为 WAITING 状态
-        // 7. 休眠当前线程. 如果线程被唤醒，清除等待状态，并检查是否取消获取锁.
+        // 7. 休眠当前线程. 如果线程被唤醒，清除等待状态（即状态设置为 0），并检查是否取消 acquire.
         for (;;) {
-            // 1. 如果节点是第一个节点，确保头节点（head）稳定，否则确保节点存在有效的前驱节点
-            if (!first                                                    // first == false 第一次
+            // 1. 当节点不是 CLH 队列第一个节点时确保该节点存在有效的前驱节点.
+            if (!first
                     && (pred = (node == null) ? null : node.prev) != null // 节点前驱不为 null(节点不为头节点)
-                    && !(first = (head == pred))) {                       // 前驱不为头节点
-                // 1.1 如果前驱节点状态小于 0 （已取消或已获得锁）清理 CLH 队列中已被取消的节点，并跳过当前循环.
+                    && !(first = (head == pred))) {                       // 前驱不为头节点，即节点不为第一个节点
+                // 1.1 如果前驱节点状态小于 0 （已取消或已成功 acquire）清理 CLH 队列中已被取消的节点，并跳过当前循环.
                 if (pred.status < 0) {
                     cleanQueue();           // predecessor cancelled
                     continue;
@@ -682,22 +687,22 @@ public abstract class AbstractQueuedSynchronizer
                     continue;
                 }
             }
-            // 2. 如果节点是第一个或尚未入队，则尝试获取锁.
+            // 2. 如果节点是第一个或尚未入队，则尝试 acquire.
             if (first || pred == null) {
                 boolean acquired;
                 try {
-                    // 根据不同锁模式尝试获取锁.
+                    // 根据不同模式尝试 acquire.
                     if (shared)
                         acquired = (tryAcquireShared(arg) >= 0);
                     else
                         acquired = tryAcquire(arg);
                 } catch (Throwable ex) {
-                    // 获取锁出现异常时，取消获取锁的尝试.
+                    // acquire 出现异常时，取消 acquire 的尝试.
                     cancelAcquire(node, interrupted, false);
                     throw ex;
                 }
                 if (acquired) {
-                    // 如果获取到锁且是节点是第一个节点（即节点前驱为虚拟的头节点），则将当前节点置为头节点.
+                    // 如果 acquire 成功且是节点是第一个节点（即节点前驱为虚拟的头节点），则将当前节点置为头节点.
                     if (first) {
                         node.prev = null;
                         head = node;
@@ -709,11 +714,11 @@ public abstract class AbstractQueuedSynchronizer
                         if (interrupted)
                             current.interrupt();
                     }
-                    // 获取到锁后直接退出
+                    // acquire 成功后直接退出
                     return 1;
                 }
             }
-            // 3. 如果节点未创建则创建它
+            // 3. 如果节点未创建则创建它（根据不同的模式创建对应类型节点）
             if (node == null) {                 // allocate; retry before enqueue
                 if (shared)
                     node = new SharedNode();
@@ -740,26 +745,26 @@ public abstract class AbstractQueuedSynchronizer
                 --spins;                        // reduce unfairness on rewaits
                 Thread.onSpinWait();
             }
-            // 6. 如果节点状态为初始状态（刚入队或者因为被唤醒，状态被重置等）时将其状态修改为 WAITING（等待锁）.
+            // 6. 如果节点状态为初始状态（刚入队或者因为被唤醒，状态被重置等）时将其状态修改为 WAITING（等待 acquire）.
             else if (node.status == 0) {
                 node.status = WAITING;          // enable signal and recheck
             }
-            // 7. 休眠当前线程。如果当线程被唤醒，清除状态（置为 0），并检查是否取消获取锁.
+            // 7. 休眠当前线程。如果当线程被唤醒，清除状态（置为 0），并检查是否取消 acquire.
             else {
                 long nanos;
                 spins = postSpins = (byte)((postSpins << 1) | 1);
-                // 如果不是超时获取锁，则将当前获取锁的线程休眠.
+                // 如果不是超时 acquire，则将当前 acquire 的线程休眠.
                 if (!timed)
                     LockSupport.park(this);
-                // 如果超时获取锁，则将线程休眠指定时间.
+                // 如果超时 acquire，则将线程休眠指定时间.
                 else if ((nanos = time - System.nanoTime()) > 0L)
                     LockSupport.parkNanos(this, nanos);
                 else
-                    // 如果获取锁已超时则结束循环，跳转到 cancelAcquire() 取消线程获取锁的尝试.
+                    // 如果 acquire 已超时则结束循环，跳转到 cancelAcquire() 取消线程 acquire 的尝试.
                     break;
-                // 当等待锁的线程被唤醒时:
+                // 当等待 acquire 的线程被唤醒时:
                 // 1. 清空线程状态: 置为 0.
-                // 2. 当线程由于中断被唤醒时，如果需要报告中断信息，跳转到 cancelAcquire() 取消线程获取锁的尝试，并报告中断状态.
+                // 2. 当线程由于中断被唤醒时，如果需要报告中断信息，跳转到 cancelAcquire() 取消线程 acquire 的尝试，并报告中断状态.
                 node.clearStatus();
                 if ((interrupted |= Thread.interrupted()) && interruptible)
                     break;
@@ -773,7 +778,7 @@ public abstract class AbstractQueuedSynchronizer
      * nodes until none are found. Unparks nodes that may have been
      * relinked to be next eligible acquirer.
      */
-    // 从尾部反复遍历，解开被取消的节点，直到找不到。 唤醒（unpark）可能已重新链接为下一个有资格获取锁的节点
+    // 从尾部反复遍历，解开被取消的节点，直到找不到。 唤醒（unpark）可能已重新链接为下一个有资格 acquire 的节点
     private void cleanQueue() {
         for (;;) {                               // restart point
             // p <-- q <-- s (p 为 q 的前驱节点, q 为当前遍历的节点, s 为 q 的后驱节点)
@@ -788,7 +793,7 @@ public abstract class AbstractQueuedSynchronizer
                 // 当节点数据发生变动时需要结束当前循环重新从 CLH 队列尾部开始遍历队列.
                 if (s == null ? tail != q : (s.prev != q || s.status < 0))
                     break;                       // inconsistent
-                // 如果当前节点已取消, 需要将节点从队列中移除.
+                // 如果当前节点已取消(或 acquire 成功), 需要将节点从队列中移除.
                 if (q.status < 0) {              // cancelled
                     // 将当前节点从队列中移除, 处理时根据节点是否为队尾（tail）节点做不同处理.
                     // 1. 当前节点为队尾节点时，直接将前驱变为队尾节点
@@ -828,7 +833,7 @@ public abstract class AbstractQueuedSynchronizer
      * @param interrupted true if thread interrupted
      * @param interruptible if should report interruption vs reset
      */
-    // 取消指定节点对应线程获取锁.
+    // 取消指定节点对应线程 acquire.
     private int cancelAcquire(Node node, boolean interrupted,
                               boolean interruptible) {
         // 将节点从 CLH 队列中删除.
@@ -983,6 +988,9 @@ public abstract class AbstractQueuedSynchronizer
      *         {@code false} otherwise
      * @throws UnsupportedOperationException if conditions are not supported
      */
+    // 如果与当前（调用）线程独占同步（即当前线程是独占模式下 acquire 成功的线程），则返回 true.
+    // 每次调用 AbstractQueuedSynchronizer.ConditionObject 方法时都会调用此方法.
+    // 此方法仅在 AbstractQueuedSynchronizer.ConditionObject 方法内部调用，因此如果不使用条件则无需定义
     protected boolean isHeldExclusively() {
         throw new UnsupportedOperationException();
     }
@@ -1513,6 +1521,7 @@ public abstract class AbstractQueuedSynchronizer
         /**
          * Removes and transfers one or all waiters to sync queue.
          */
+        // 移除一个或所有等待的线程节点并将其转移到同步队列（即 CLH 队列）。
         private void doSignal(ConditionNode first, boolean all) {
             while (first != null) {
                 ConditionNode next = first.nextWaiter;
@@ -1537,8 +1546,10 @@ public abstract class AbstractQueuedSynchronizer
          */
         public final void signal() {
             ConditionNode first = firstWaiter;
+            // 如果线程没有获取锁直接抛出异常.
             if (!isHeldExclusively())
                 throw new IllegalMonitorStateException();
+            // 当存在在条件变量上进行等待的线程时才进行通知.
             if (first != null)
                 doSignal(first, false);
         }
@@ -1567,19 +1578,24 @@ public abstract class AbstractQueuedSynchronizer
          * @return savedState to reacquire after wait
          */
         private int enableWait(ConditionNode node) {
+            // 如果当前线程 acquire 成功（即获取锁成功）才能在条件变量上等待, 否则抛出 IllegalMonitorStateException 异常.
             if (isHeldExclusively()) {
                 node.waiter = Thread.currentThread();
+                // 状态设置为 3.
                 node.setStatusRelaxed(COND | WAITING);
+                // 将条件变量节点添加到条件变量等待队列尾部.
                 ConditionNode last = lastWaiter;
                 if (last == null)
                     firstWaiter = node;
                 else
                     last.nextWaiter = node;
                 lastWaiter = node;
+                // 获取同步状态，并释放当前线程持有的锁，如果释放失败程序继续往下走会抛出 IllegalMonitorStateException 异常.
                 int savedState = getState();
                 if (release(savedState))
                     return savedState;
             }
+            // 当前线程未 acquire 成功时不允许在条件变量上等待, 此时直接抛出异常.
             node.status = CANCELLED; // lock not held or inconsistent
             throw new IllegalMonitorStateException();
         }
@@ -1590,8 +1606,11 @@ public abstract class AbstractQueuedSynchronizer
          * @param node the node
          * @return true if is reacquiring
          */
+        // 判断指定条件变量节点是否准备好重新在同步队列（CLH 队列）中 acquire.
+        // 当节点在 CLH 队列中时返回 true.
         private boolean canReacquire(ConditionNode node) {
             // check links, not status to avoid enqueue race
+            // 检查链接，而不是状态以避免排队竞争
             return node != null && node.prev != null && isEnqueued(node);
         }
 
@@ -1599,6 +1618,7 @@ public abstract class AbstractQueuedSynchronizer
          * Unlinks the given node and other non-waiting nodes from
          * condition queue unless already unlinked.
          */
+        // 移除条件变量等待队列中节点状态为：0（初始状态）、WAITING、CANCELLED 的节点.
         private void unlinkCancelledWaiters(ConditionNode node) {
             if (node == null || node.nextWaiter != null || node == lastWaiter) {
                 ConditionNode w = firstWaiter, trail = null;
@@ -1671,9 +1691,15 @@ public abstract class AbstractQueuedSynchronizer
             if (Thread.interrupted())
                 throw new InterruptedException();
             ConditionNode node = new ConditionNode();
+            // 让持有锁的当前线程释放锁并将其添加到条件变量等待队列中，同时还将节点状态设置为 3.
             int savedState = enableWait(node);
             LockSupport.setCurrentBlocker(this); // for back-compatibility
             boolean interrupted = false, cancelled = false;
+
+            // 当节点未准备好重新获取锁时（即节点不在 CLH 队列中）：
+            // 1. 如果线程被中断且在依然条件变量上等待直接退出该循环.
+            // 2. 如果线程未中断且状态不为 0、WAITING 或 CANCELLED 运行 ForkJoinPool 中给定的阻塞任务.
+            // 3. 否则自旋等待.
             while (!canReacquire(node)) {
                 if (interrupted |= Thread.interrupted()) {
                     if (cancelled = (node.getAndUnsetStatus(COND) & COND) != 0)
@@ -1687,14 +1713,18 @@ public abstract class AbstractQueuedSynchronizer
                 } else
                     Thread.onSpinWait();    // awoke while enqueuing
             }
+            // 当节点处于 CLH 队列中时（线程被中断、或通过 signal、signalAll 被重新添加 CLH 队列中) 尝试 acquire.
             LockSupport.setCurrentBlocker(null);
+            // 将节点状态重置为 0 然后尝试 acquire.
             node.clearStatus();
             acquire(node, savedState, false, false, false, 0L);
             if (interrupted) {
+                // 如果线程在条件变量上等待时被中断，从条件变量队列中取消当前节点和其他非等待节点的链接.
                 if (cancelled) {
                     unlinkCancelledWaiters(node);
                     throw new InterruptedException();
                 }
+                // 如果线程中断时不在条件变量上等待，则主动中断当前线程.
                 Thread.currentThread().interrupt();
             }
         }
