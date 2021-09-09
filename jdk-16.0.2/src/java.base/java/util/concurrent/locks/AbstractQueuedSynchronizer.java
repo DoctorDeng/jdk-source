@@ -1256,6 +1256,9 @@ public abstract class AbstractQueuedSynchronizer
      * is not the first queued thread.  Used only as a heuristic in
      * ReentrantReadWriteLock.
      */
+    // 如果等待队列中的第一个线程以独占模式等待（即等待获取写锁）则返回 true.
+    // 如果此方法返回true ，并且当前线程尝试以共享模式获取读锁（即，此方法是从tryAcquireShared调用的），则可以保证当前线程不是第一个排队的线程。
+    // 仅用作 ReentrantReadWriteLock 中的启发式方法
     final boolean apparentlyFirstQueuedIsExclusive() {
         Node h, s;
         return (h = head) != null && (s = h.next)  != null &&
@@ -1305,7 +1308,9 @@ public abstract class AbstractQueuedSynchronizer
      *         is at the head of the queue or the queue is empty
      * @since 1.7
      */
-    // 查询是否有任何线程等待获取的时间比当前线程长.
+    // 查询是否有任何线程等待 acquire 的时间比当前线程长.
+    // true：存在在当前线程前面排队的线程.
+    // false：当前线程是在队列的头部或队列为空.
     public final boolean hasQueuedPredecessors() {
         Thread first = null; Node h, s;
         if ((h = head) != null && ((s = h.next) == null ||
