@@ -272,7 +272,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
             Thread current = Thread.currentThread();
             int c = getState();
             if (c == 0) {
-                // 当不存在等待时间比当前线程长的线程时才能够获取锁.
+                // 队列为空或者当前线程在等待队列头部时才能够获取锁（即线程为第一个入队的线程）.
                 if (!hasQueuedThreads() && compareAndSetState(0, 1)) {
                     setExclusiveOwnerThread(current);
                     return true;
@@ -290,7 +290,7 @@ public class ReentrantLock implements Lock, java.io.Serializable {
          * Acquires only if thread is first waiter or empty
          */
         protected final boolean tryAcquire(int acquires) {
-            // 当锁未被占有且不存在等待时间比当前线程长的线程时才能够获取锁.
+            // 当锁未被占有且线程在等待队列头部时才能够获取锁.
             if (getState() == 0 && !hasQueuedPredecessors() &&
                 compareAndSetState(0, acquires)) {
                 setExclusiveOwnerThread(Thread.currentThread());
