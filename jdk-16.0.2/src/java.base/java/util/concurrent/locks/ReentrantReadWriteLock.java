@@ -376,8 +376,8 @@ public class ReentrantReadWriteLock
          */
         // 功能类似于 writerShouldBlock.
         //   * 公平模式：true 当前线程不是队列头部线程（即不是队列中等待时间最长的线程）, false 线程是队列头部线程
-        //   * 非公平模模式：true 等待队列的头部线程在等待写锁, false 等待队列头部线程不在等待写锁.
-        // 非公平模式下没有和 writerShouldBlock() 一样始终返回 false 的原因是获取写锁时需要等待所有读锁被释放, 如果队列头部线程在等待写锁，
+        //   * 非公平模模式：true 等待队列的头部线程在等待写锁（或者队列头部线程不是在等待获取读锁）, false 等待队列头部线程不在等待写锁（即队列头部线程在等待获取读锁）.
+        // 非公平模式下没有和 writerShouldBlock() 一样始终返回 false 的原因是获取写锁时需要等待所有读锁被释放, 当队列头部线程在等待写锁时，
         // 如果允许其他线程获取读锁将可能导致获取写锁的线程“饥饿”，为了避免该情况需要在队列头部线程在等待写锁时各个线程放弃获取读锁的资格.
         abstract boolean readerShouldBlock();
 
@@ -386,11 +386,11 @@ public class ReentrantReadWriteLock
          * the write lock, and otherwise eligible to do so, should block
          * because of policy for overtaking other waiting threads.
          */
-        // 当多个线程都有资格获取写锁时，根据 writerShouldBlock() 方法来确定当前线程是否应该阻塞（即失去竞争获取锁的资格）.
+        // 用于控制写锁获取策略，当一个线程获取写锁时，根据 writerShouldBlock() 方法来确定线程是否有资格获取写锁，没有资格（即 writerShouldBlock 返回 true）获取写锁的线程应该被阻塞.
         // 1. true：当前线程没有获取写锁的资格，需要被阻塞.
-        // 2. false: 表示当前线程有资格获取写锁.
-        // 非公平模式下 writerShouldBlock 总是返回 false, 即总是有资格获取锁.
-        // 公平模式下如果等待队列为空或线程处于等待队列中的头部返回 true, 否则返回 false. 即在等待队列头部的线程才有资格获取写锁.
+        // 2. false: 表示当前线程有资格获取写锁, 由于写锁的独占性，有资格获取写锁的线程需要与其他同样有资格的线程去竞争获取写锁.
+        // 非公平模式下 writerShouldBlock 总是返回 false, 即各个线程需要抢占式获取写锁，这样性能更高.
+        // 公平模式下如果等待队列为空或线程处于等待队列中的头部返回 true, 否则返回 false. 即只有在等待队列头部的线程才有资格获取写锁, 这样保证了公平性，但是性能有所下降.
         abstract boolean writerShouldBlock();
 
         /*
