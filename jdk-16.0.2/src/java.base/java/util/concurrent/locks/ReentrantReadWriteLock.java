@@ -287,7 +287,7 @@ public class ReentrantReadWriteLock
          * A counter for per-thread read hold counts.
          * Maintained as a ThreadLocal; cached in cachedHoldCounter.
          */
-        // 每个线程读锁计数器。 作为 ThreadLocal 维护； 缓存在 cachedHoldCounter 中
+        // 每个线程的读锁计数器。使用 ThreadLocal 存储.
         static final class HoldCounter {
             int count;          // initially 0
             // Use id, not reference, to avoid garbage retention
@@ -311,6 +311,7 @@ public class ReentrantReadWriteLock
          * Initialized only in constructor and readObject.
          * Removed whenever a thread's read hold count drops to 0.
          */
+        // 当前线程持有的可重入读锁的数量。 仅在构造函数和 readObject 中初始化。每当线程的读锁计数减少到 0 时删除该计数器.
         private transient ThreadLocalHoldCounter readHolds;
 
         /**
@@ -350,11 +351,10 @@ public class ReentrantReadWriteLock
          * <p>This allows tracking of read holds for uncontended read
          * locks to be very cheap.
          */
-        // 是第一个获得读锁的线程。 firstReaderHoldCount 是 firstReader 的计数。
+        // firstReader 是第一个获得读锁的线程。 firstReaderHoldCount 是 firstReader 的计数。
         // 更准确地说，firstReader 是最后一次将共享计数从 0 更改为 1 的唯一线程，此后一直没有释放读锁； 如果没有这样的线程，则为 null。
         // 除非线程在不放弃其读锁的情况下终止，否则不会导致垃圾保留，因为 tryReleaseShared 将其设置为 null。
-        // 通过良性数据竞争访问； 依赖于内存模型对引用的 out-of-thin-air 的保证。
-        // 这种允许跟踪无竞争读锁的读保持非常廉价。
+        // firstReader 和 firstReaderHoldCount 组成一级缓存，可以有效减少 ThreadLocal 查找带来的性能损失.
         private transient Thread firstReader;
         private transient int firstReaderHoldCount;
 
@@ -431,7 +431,7 @@ public class ReentrantReadWriteLock
             // 大致流程：
             // 1. 如果读取计数非零或写入计数非零且所有者不是当前线程，获取锁失败.
             // 2. 如果计数器饱和，则失败。(只有当计数已经非零时才会发生这种情况。）
-            // 3. 否则，如果该线程是重入获取锁或队列策略允许，则该线程有资格获得锁。如果是，更新状态并设置锁的所有者.
+            // 3. 否则，如果该线程有资格获取锁（锁策略允许或重入获取锁），更新状态并设置锁的所有者.
             Thread current = Thread.currentThread();
             int c = getState();
             int w = exclusiveCount(c);
@@ -527,7 +527,7 @@ public class ReentrantReadWriteLock
              *    saturated, chain to version with full retry loop.
              */
             // 大致说明：
-            // 1. 如果写锁被其他线程持有者直接失败.
+            // 1. 如果写锁被其他线程持有则直接失败.
             // 2. 否则，该线程有资格获得锁写入状态，因此询问它是否应该因为队列策略而阻塞。
             //    如果没有，请尝试通过 CASing 状态和更新计数来授予。
             //    请注意，步骤不检查可重入获取，它被推迟到完整版本以避免在更典型的非可重入情况下检查保持计数.
