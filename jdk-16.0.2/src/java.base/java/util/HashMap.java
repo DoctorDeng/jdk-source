@@ -566,14 +566,18 @@ public class HashMap<K,V> extends AbstractMap<K,V>
      */
     final Node<K,V> getNode(Object key) {
         Node<K,V>[] tab; Node<K,V> first, e; int n, hash; K k;
+        // 当 Map 存在元素且 key Hash 后的下标存在元素时才进行查找.
         if ((tab = table) != null && (n = tab.length) > 0 &&
             (first = tab[(n - 1) & (hash = hash(key))]) != null) {
+            // 1. 如果是第一个元素直接返回.
             if (first.hash == hash && // always check first node
                 ((k = first.key) == key || (key != null && key.equals(k))))
                 return first;
             if ((e = first.next) != null) {
+                // 不是第一个元素且链表已转为红黑树, 则通过红黑树进行查找.
                 if (first instanceof TreeNode)
                     return ((TreeNode<K,V>)first).getTreeNode(hash, key);
+                // 链表方式从前向后扫描.
                 do {
                     if (e.hash == hash &&
                         ((k = e.key) == key || (key != null && key.equals(k))))
