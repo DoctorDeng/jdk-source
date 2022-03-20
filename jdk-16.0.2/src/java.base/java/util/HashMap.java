@@ -683,6 +683,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
         int oldCap = (oldTab == null) ? 0 : oldTab.length;
         int oldThr = threshold;
         int newCap, newThr = 0;
+        // 1. 当 HashMap 中存在元素时确定新的容量逻辑.
+        //  * 如果元素数量大于最大容量 (MAXIMUM_CAPACITY) 直接返回原有 table.
+        //  * 如果元素数量 * 2 < 最大容量且元素数量大于默认初始容量(16) 则新的容量直接翻倍.
         if (oldCap > 0) {
             if (oldCap >= MAXIMUM_CAPACITY) {
                 threshold = Integer.MAX_VALUE;
@@ -692,17 +695,21 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                      oldCap >= DEFAULT_INITIAL_CAPACITY)
                 newThr = oldThr << 1; // double threshold
         }
+        // 2. 当 HashMap 中不存在元素但扩容阀值(threshold)大于 0 时新的容量直接等于扩容阀值.
         else if (oldThr > 0) // initial capacity was placed in threshold
             newCap = oldThr;
         else {               // zero initial threshold signifies using defaults
+            // 3. 如果 HashMap 即没有元素且扩容阀值(threshold)为 0 则容量和扩容阀值设置为默认值.
             newCap = DEFAULT_INITIAL_CAPACITY;
             newThr = (int)(DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
         }
+        // 如果新的扩容阀值等于 0 则将阀值设置为新容量*负载因子或者为最大值 Integer.MAX_VALUE.
         if (newThr == 0) {
             float ft = (float)newCap * loadFactor;
             newThr = (newCap < MAXIMUM_CAPACITY && ft < (float)MAXIMUM_CAPACITY ?
                       (int)ft : Integer.MAX_VALUE);
         }
+        // 扩容操作:
         threshold = newThr;
         @SuppressWarnings({"rawtypes","unchecked"})
         Node<K,V>[] newTab = (Node<K,V>[])new Node[newCap];
