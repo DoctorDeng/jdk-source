@@ -695,7 +695,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
         //===================== 确定 HashMap 新容量 ====================
         // 1. 当 HashMap 中存在元素时确定新的容量逻辑.
         //  * 如果元素数量大于最大容量 (MAXIMUM_CAPACITY) 直接返回原有 table(即不再扩容).
-        //  * 如果元素数量 * 2 < 最大容量且元素数量大于默认初始容量(16) 则新的容量直接翻倍.
+        //  * 如果元素数量 * 2 < 最大容量且元素数量大于默认初始容量(16) 则新的容量直接翻倍、扩容阀值(threshold)也翻倍.
         if (oldCap > 0) {
             if (oldCap >= MAXIMUM_CAPACITY) {
                 threshold = Integer.MAX_VALUE;
@@ -713,7 +713,10 @@ public class HashMap<K,V> extends AbstractMap<K,V>
             newCap = DEFAULT_INITIAL_CAPACITY;
             newThr = (int)(DEFAULT_LOAD_FACTOR * DEFAULT_INITIAL_CAPACITY);
         }
-        // 如果新的扩容阀值等于 0 则将阀值设置为新容量*负载因子或者为最大值 Integer.MAX_VALUE.
+        // newThr == 0 表示：
+        // * HashMap 元素数量 * 2 > 最大容量(MAXIMUM_CAPACITY)
+        // * HashMap 中不存在元素但扩容阀值(threshold)大于 0
+        // 上述两种情况都将 新阀值 = 新容量*负载因子或为最大值 Integer.MAX_VALUE.
         if (newThr == 0) {
             float ft = (float)newCap * loadFactor;
             newThr = (newCap < MAXIMUM_CAPACITY && ft < (float)MAXIMUM_CAPACITY ?
