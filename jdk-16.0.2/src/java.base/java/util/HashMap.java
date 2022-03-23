@@ -629,21 +629,27 @@ public class HashMap<K,V> extends AbstractMap<K,V>
     final V putVal(int hash, K key, V value, boolean onlyIfAbsent,
                    boolean evict) {
         Node<K,V>[] tab; Node<K,V> p; int n, i;
+        // 如果数组为空则初始化容量.
         if ((tab = table) == null || (n = tab.length) == 0)
             n = (tab = resize()).length;
+        // 如果对应下标桶中不存在元素, 则直接创建元素对应节点并放入桶中.
         if ((p = tab[i = (n - 1) & hash]) == null)
             tab[i] = newNode(hash, key, value, null);
         else {
             Node<K,V> e; K k;
+            // 桶中第一个节点即为 key 对应的节点, 直接将 e 指向该节点.
             if (p.hash == hash &&
                 ((k = p.key) == key || (key != null && key.equals(k))))
                 e = p;
+            // 桶为红黑树形式, 已红黑树方式放入节点.
             else if (p instanceof TreeNode)
                 e = ((TreeNode<K,V>)p).putTreeVal(this, tab, hash, key, value);
             else {
+                // 链表形式，则遍历链表放入节点.
                 for (int binCount = 0; ; ++binCount) {
                     if ((e = p.next) == null) {
                         p.next = newNode(hash, key, value, null);
+                        // 如果链表长度已超过 7 则将链表转换为红黑树.
                         if (binCount >= TREEIFY_THRESHOLD - 1) // -1 for 1st
                             treeifyBin(tab, hash);
                         break;
@@ -654,6 +660,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                     p = e;
                 }
             }
+            // 如果元素在 HashMap 中存在则替换旧的 value 为新的 value.
             if (e != null) { // existing mapping for key
                 V oldValue = e.value;
                 if (!onlyIfAbsent || oldValue == null)
@@ -662,7 +669,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                 return oldValue;
             }
         }
+        // 更新 HashMap 变更次数.
         ++modCount;
+        // 当 HashMap 元素数量超过扩容阀值(threshold)时扩容 HashMap.
         if (++size > threshold)
             resize();
         afterNodeInsertion(evict);
@@ -683,8 +692,9 @@ public class HashMap<K,V> extends AbstractMap<K,V>
         int oldCap = (oldTab == null) ? 0 : oldTab.length;
         int oldThr = threshold;
         int newCap, newThr = 0;
+        //===================== 确定 HashMap 新容量 ====================
         // 1. 当 HashMap 中存在元素时确定新的容量逻辑.
-        //  * 如果元素数量大于最大容量 (MAXIMUM_CAPACITY) 直接返回原有 table.
+        //  * 如果元素数量大于最大容量 (MAXIMUM_CAPACITY) 直接返回原有 table(即不再扩容).
         //  * 如果元素数量 * 2 < 最大容量且元素数量大于默认初始容量(16) 则新的容量直接翻倍.
         if (oldCap > 0) {
             if (oldCap >= MAXIMUM_CAPACITY) {
@@ -709,7 +719,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
             newThr = (newCap < MAXIMUM_CAPACITY && ft < (float)MAXIMUM_CAPACITY ?
                       (int)ft : Integer.MAX_VALUE);
         }
-        // 扩容操作:
+        // =============== 扩容操作, 将旧 table 中的数据移动到新的 table ====================
         threshold = newThr;
         @SuppressWarnings({"rawtypes","unchecked"})
         Node<K,V>[] newTab = (Node<K,V>[])new Node[newCap];
@@ -719,10 +729,14 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                 Node<K,V> e;
                 if ((e = oldTab[j]) != null) {
                     oldTab[j] = null;
+                    // 桶只有一个元素, 直接将其放置到新 table 的对应位置下.
                     if (e.next == null)
                         newTab[e.hash & (newCap - 1)] = e;
+                    // 如果是桶红黑树结构, 则拆分树.
                     else if (e instanceof TreeNode)
                         ((TreeNode<K,V>)e).split(this, newTab, j, oldCap);
+                    // 如果桶是普通链表且存在多个元素, 将链表拆分为两个部分:
+                    // *
                     else { // preserve order
                         Node<K,V> loHead = null, loTail = null;
                         Node<K,V> hiHead = null, hiTail = null;
