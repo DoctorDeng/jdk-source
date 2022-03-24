@@ -739,7 +739,8 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                     else if (e instanceof TreeNode)
                         ((TreeNode<K,V>)e).split(this, newTab, j, oldCap);
                     // 如果桶是普通链表且存在多个元素, 将链表拆分为两个部分:
-                    // *
+                    // * 扩容后根据 hash 计算出的桶下标位置依然不变的元素.
+                    // * 扩容后根据 hash 计算出的桶的下标位置会变动的元素(新位置=原容量+原位置下标).
                     else { // preserve order
                         Node<K,V> loHead = null, loTail = null;
                         Node<K,V> hiHead = null, hiTail = null;
