@@ -845,9 +845,12 @@ public class HashMap<K,V> extends AbstractMap<K,V>
         if ((tab = table) != null && (n = tab.length) > 0 &&
             (p = tab[index = (n - 1) & hash]) != null) {
             Node<K,V> node = null, e; K k; V v;
+            // =========== 找出指定 key 对应元素 =============
+            // 1.1 当指定下标的元素即为指定 key 对应元素时.
             if (p.hash == hash &&
                 ((k = p.key) == key || (key != null && key.equals(k))))
                 node = p;
+            // 1.2 在链表或红黑树中进行查找.
             else if ((e = p.next) != null) {
                 if (p instanceof TreeNode)
                     node = ((TreeNode<K,V>)p).getTreeNode(hash, key);
@@ -863,6 +866,7 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                     } while ((e = e.next) != null);
                 }
             }
+            // 根据红黑树或链表进行相应的删除操作.
             if (node != null && (!matchValue || (v = node.value) == value ||
                                  (value != null && value.equals(v)))) {
                 if (node instanceof TreeNode)
@@ -2302,12 +2306,16 @@ public class HashMap<K,V> extends AbstractMap<K,V>
          * @param index the index of the table being split
          * @param bit the bit of hash to split on
          */
+        // 拆分红黑树逻辑.
         final void split(HashMap<K,V> map, Node<K,V>[] tab, int index, int bit) {
             TreeNode<K,V> b = this;
             // Relink into lo and hi lists, preserving order
             TreeNode<K,V> loHead = null, loTail = null;
             TreeNode<K,V> hiHead = null, hiTail = null;
             int lc = 0, hc = 0;
+            // 遍历红黑树中节点, 将红黑树分为两个子链表：
+            // * 链表 1：其中的元素在扩容后所在桶下标不变(新下标=旧下标), 该链表头节点为: loHead, 尾节点为 loTail.
+            // * 链表 2：其中的元素在扩容后所在桶下标改变(新下标=旧容量+旧下标), 该链表头节点为: hiHead, 尾节点为 hiTail.
             for (TreeNode<K,V> e = b, next; e != null; e = next) {
                 next = (TreeNode<K,V>)e.next;
                 e.next = null;
@@ -2328,10 +2336,12 @@ public class HashMap<K,V> extends AbstractMap<K,V>
                     ++hc;
                 }
             }
-
+            // 根据 UNTREEIFY_THRESHOLD 值(6) 确定将拆分后的链表是否树化.
             if (loHead != null) {
+                // 数量小于 UNTREEIFY_THRESHOLD(6) 则解除树化.
                 if (lc <= UNTREEIFY_THRESHOLD)
                     tab[index] = loHead.untreeify(map);
+                // 否则重新树化.
                 else {
                     tab[index] = loHead;
                     if (hiHead != null) // (else is already treeified)
