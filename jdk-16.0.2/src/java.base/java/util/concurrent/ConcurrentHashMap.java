@@ -504,24 +504,28 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * bounds for power of two table sizes, and is further required
      * because the top two bits of 32bit hash fields are used for
      * control purposes.
+     * 最大可能的表容量.
      */
     private static final int MAXIMUM_CAPACITY = 1 << 30;
 
     /**
      * The default initial table capacity.  Must be a power of 2
      * (i.e., at least 1) and at most MAXIMUM_CAPACITY.
+     * 表默认容量, 如果在初始化时不指定容量则为该值.
      */
     private static final int DEFAULT_CAPACITY = 16;
 
     /**
      * The largest possible (non-power of two) array size.
      * Needed by toArray and related methods.
+     * 表数组的最大大小.
      */
     static final int MAX_ARRAY_SIZE = Integer.MAX_VALUE - 8;
 
     /**
      * The default concurrency level for this table. Unused but
      * defined for compatibility with previous versions of this class.
+     * 该表的默认并发级别. 未使用但定义为与此类的先前版本兼容.
      */
     private static final int DEFAULT_CONCURRENCY_LEVEL = 16;
 
@@ -531,6 +535,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * actual floating point value isn't normally used -- it is
      * simpler to use expressions such as {@code n - (n >>> 2)} for
      * the associated resizing threshold.
+     * 负载因子.
      */
     private static final float LOAD_FACTOR = 0.75f;
 
@@ -541,6 +546,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * than 2, and should be at least 8 to mesh with assumptions in
      * tree removal about conversion back to plain bins upon
      * shrinkage.
+     * 将链表转换为红黑树的阀值.
      */
     static final int TREEIFY_THRESHOLD = 8;
 
@@ -548,6 +554,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * The bin count threshold for untreeifying a (split) bin during a
      * resize operation. Should be less than TREEIFY_THRESHOLD, and at
      * most 6 to mesh with shrinkage detection under removal.
+     * 将红黑树退化为链表的阀值.
      */
     static final int UNTREEIFY_THRESHOLD = 6;
 
@@ -556,6 +563,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * (Otherwise the table is resized if too many nodes in a bin.)
      * The value should be at least 4 * TREEIFY_THRESHOLD to avoid
      * conflicts between resizing and treeification thresholds.
+     * 链表转换为红黑树表的最小容量.
+     * 该值应至少为 4 * TREEIFY_THRESHOLD 以避免调整大小和树化阈值(TREEIFY_THRESHOLD)之间的冲突.
      */
     static final int MIN_TREEIFY_CAPACITY = 64;
 
@@ -565,23 +574,28 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * serves as a lower bound to avoid resizers encountering
      * excessive memory contention.  The value should be at least
      * DEFAULT_CAPACITY.
+     * 每个转移步骤(transfer step)的最小重新装箱数. 范围被细分以允许多个调整器线程.
+     * 此值用作下限，以避免调整器遇到过多的内存争用. 该值应至少为 DEFAULT_CAPACITY.
      */
     private static final int MIN_TRANSFER_STRIDE = 16;
 
     /**
      * The number of bits used for generation stamp in sizeCtl.
      * Must be at least 6 for 32bit arrays.
+     * sizeCtl 中用于生成标记的位数. 对于 32 位数组必须至少为 6.
      */
     private static final int RESIZE_STAMP_BITS = 16;
 
     /**
      * The maximum number of threads that can help resize.
      * Must fit in 32 - RESIZE_STAMP_BITS bits.
+     * 可以帮助调整大小的最大线程数. 必须适合 32 - RESIZE_STAMP_BITS 位.
      */
     private static final int MAX_RESIZERS = (1 << (32 - RESIZE_STAMP_BITS)) - 1;
 
     /**
      * The bit shift for recording size stamp in sizeCtl.
+     * sizeCtl 中记录 size stamp 的 bit 移位.
      */
     private static final int RESIZE_STAMP_SHIFT = 32 - RESIZE_STAMP_BITS;
 
@@ -786,6 +800,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * Base counter value, used mainly when there is no contention,
      * but also as a fallback during table initialization
      * races. Updated via CAS.
+     * 基本计数器值主要在没有争用时使用, 通过 CAS 更新, 高并发情况下使用 counterCells.
      */
     private transient volatile long baseCount;
 
@@ -796,6 +811,10 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * when table is null, holds the initial table size to use upon
      * creation, or 0 for default. After initialization, holds the
      * next element count value upon which to resize the table.
+     * 表初始化和调整大小控制.
+     * 如果为负, 则表正在初始化或调整大小：-1 用于初始化, 否则为 -(1 + 活动调整大小线程的数量).
+     * 另外, 当表为空时，为创建时使用的初始表大小, 或默认为 0.
+     * 初始化后, 保存下一个元素计数值, 根据该值调整表的大小.
      */
     private transient volatile int sizeCtl;
 
@@ -811,6 +830,19 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
 
     /**
      * Table of counter cells. When non-null, size is a power of 2.
+     * 非空时，大小是 2 的幂.
+     * 
+     * CounterCell 数组用于记录当前表格的元素数量即 size. 
+     * CounterCell 内部有一个 long 型变量名称为 value 用于记录计数值, 所有 CounterCell 的 value 值相加之后的值便是当前表格大小(size)
+
+     * 并发更新计数时, 每个线程通过算法确定不同的 CounterCell, 然后通过 CAS 更新 CounterCell 中的 value.
+     * 
+     * 不使用 long 或 int 通过 CAS 进行自增计数, 是因为 CounterCell 在高并发时更加高效, 具体原因如下:
+     * 1. 高并发时通过 CAS 自旋更新单个变量非常容易失败, 导致性能降低.
+     * 2. CounterCell 数组将多个线程对单一 long 变量的 CAS 更新压力分摊到多个 CounterCell value 变量上, 有效降低了高并发下的竞争.
+     * 
+     * 更多可学习: LongAddr 类实现.
+     * 
      */
     private transient volatile CounterCell[] counterCells;
 
@@ -1013,14 +1045,19 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         int binCount = 0;
         for (Node<K,V>[] tab = table;;) {
             Node<K,V> f; int n, i, fh; K fk; V fv;
+            // 1. 表为空则初始化表.
             if (tab == null || (n = tab.length) == 0)
                 tab = initTable();
+            // 2. 为 null 表示该位置没有任何元素, 通过 CAS 进行插入.
             else if ((f = tabAt(tab, i = (n - 1) & hash)) == null) {
+                // 通过 CAS 将该下标元素设置为当前要插入的节点.
                 if (casTabAt(tab, i, null, new Node<K,V>(hash, key, value)))
                     break;                   // no lock when adding to empty bin
             }
+            // 3. 如果在扩容则帮助扩容.
             else if ((fh = f.hash) == MOVED)
                 tab = helpTransfer(tab, f);
+            // 4. 插入不覆盖原有节点时, 检查第一个节点是否是目标节点而不获取锁.
             else if (onlyIfAbsent // check first node without acquiring lock
                      && fh == hash
                      && ((fk = f.key) == key || (fk != null && key.equals(fk)))
@@ -1028,8 +1065,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 return fv;
             else {
                 V oldVal = null;
+                // 根据当前数据结构：链表或者红黑树进行不同的入桶(或称为入 bin)操作.
+                // 此处使用 synchronized 锁定链表或红黑树上的第一个节点, 保证链表或红黑树并发插入的正确.
                 synchronized (f) {
                     if (tabAt(tab, i) == f) {
+                        // 普通链表操作.
                         if (fh >= 0) {
                             binCount = 1;
                             for (Node<K,V> e = f;; ++binCount) {
@@ -1049,6 +1089,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                                 }
                             }
                         }
+                        // 红黑树入桶操作.
                         else if (f instanceof TreeBin) {
                             Node<K,V> p;
                             binCount = 2;
@@ -1059,11 +1100,13 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                                     p.val = value;
                             }
                         }
+                        // 如果在 computeIfAbsent and compute 期间直接报错.
                         else if (f instanceof ReservationNode)
                             throw new IllegalStateException("Recursive update");
                     }
                 }
                 if (binCount != 0) {
+                    // 当节点数超过阀值时, 将链表转换为红黑树.
                     if (binCount >= TREEIFY_THRESHOLD)
                         treeifyBin(tab, i);
                     if (oldVal != null)
@@ -2291,11 +2334,15 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     private final Node<K,V>[] initTable() {
         Node<K,V>[] tab; int sc;
         while ((tab = table) == null || tab.length == 0) {
+            // sizeCtl 小于 0 表示其他线程在初始化表, 这便是当前线程通过 CAS 竞争失败, 此时单纯的自旋.
+            // 使用 Thread.yield() 可以减少线程在自旋时的开销.
             if ((sc = sizeCtl) < 0)
                 Thread.yield(); // lost initialization race; just spin
+            // CAS 竞争成功, 进行表的初始化.
             else if (U.compareAndSetInt(this, SIZECTL, sc, -1)) {
                 try {
                     if ((tab = table) == null || tab.length == 0) {
+                        // 如果未指定初始大小, 则使用默认初始容量.
                         int n = (sc > 0) ? sc : DEFAULT_CAPACITY;
                         @SuppressWarnings("unchecked")
                         Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n];
@@ -2317,6 +2364,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * perform transfer if work is available.  Rechecks occupancy
      * after a transfer to see if another resize is already needed
      * because resizings are lagging additions.
+     * 更新计数(即表的大小)，如果表太小且尚未调整大小(扩容), 则调整大小，启动传输(transfer, 即将表中的元素拷贝至新的数组中).
+     * 如果已经调整大小，如果工作可用，则帮助执行转移. 在传输之后, 重新检查占用, 查看是否需要再次调整大小(因为调整大小是滞后添加).
      *
      * @param x the count to add
      * @param check if <0, don't check resize, if <= 1 only check if uncontended
@@ -2359,6 +2408,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
 
     /**
      * Helps transfer if a resize is in progress.
+     * 如果正在进行调整大小，帮助扩容.
      */
     final Node<K,V>[] helpTransfer(Node<K,V>[] tab, Node<K,V> f) {
         Node<K,V>[] nextTab; int sc;
@@ -2420,11 +2470,15 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     /**
      * Moves and/or copies the nodes in each bin to new table. See
      * above for explanation.
+     * 转移操作, 将一个数组中的元素转移到另一个数组中.
      */
     private final void transfer(Node<K,V>[] tab, Node<K,V>[] nextTab) {
         int n = tab.length, stride;
+        // NCPU 为 CPU 逻辑核心数.
+        // 此处根据 CPU 数确定扩容时的 stride(步进).
         if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
             stride = MIN_TRANSFER_STRIDE; // subdivide range
+        // nextTab 为 null 则表示.
         if (nextTab == null) {            // initiating
             try {
                 @SuppressWarnings("unchecked")
@@ -2581,18 +2635,26 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     // See LongAdder version for explanation
     private final void fullAddCount(long x, boolean wasUncontended) {
         int h;
+        // 获取当前线程的 probe (随机数)的值，如果值为 0，则初始化当前线程的 probe 的值.
         if ((h = ThreadLocalRandom.getProbe()) == 0) {
             ThreadLocalRandom.localInit();      // force initialization
             h = ThreadLocalRandom.getProbe();
             wasUncontended = true;
         }
+        // 如果最后一个槽(slot)非空则为 true.
         boolean collide = false;                // True if last slot nonempty
         for (;;) {
             CounterCell[] cs; CounterCell c; int n; long v;
+            // 如果 counterCells 已被初始化.
             if ((cs = counterCells) != null && (n = cs.length) > 0) {
+                // 通过该值与当前线程 probe 求与，获得 cells 的下标元素(与 hash 表通过 key 求数组下标一样).
+                // 如果该下标下不存在对应的 CounterCell 则创建一个.
                 if ((c = cs[(n - 1) & h]) == null) {
+                    // 当 cells 无并发竞争时创建一个新的 CounterCell.
+                    // 有并发竞争则不创建(因为其他线程正在创建).
                     if (cellsBusy == 0) {            // Try to attach new Cell
                         CounterCell r = new CounterCell(x); // Optimistic create
+                        // 通过 CAS 获取锁, 获取成功才将新创建的 CounterCell 方法 counterCells 数组中.
                         if (cellsBusy == 0 &&
                             U.compareAndSetInt(this, CELLSBUSY, 0, 1)) {
                             boolean created = false;
@@ -2614,14 +2676,23 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                     }
                     collide = false;
                 }
+                // 代码执行此处则说明在 addCount 方法中 CAS 失败了且 probe 的值不为空.
                 else if (!wasUncontended)       // CAS already known to fail
+                    //  设置为未冲突标识，进入下一次自旋.
                     wasUncontended = true;      // Continue after rehash
+                // 通过 CAS 更新当前线程对应 CounterCell 中的计数值.
                 else if (U.compareAndSetLong(c, CELLVALUE, v = c.value, v + x))
                     break;
+                // 此处 CounterCell CAS 更新失败
+                // 如果已经有其他线程建立了新的 counterCells 或者 CounterCells 大于 CPU 逻辑核心数.
                 else if (counterCells != cs || n >= NCPU)
+                    // 设置当前线程的循环失败不进行扩容.
                     collide = false;            // At max size or stale
+                //  恢复 collide 状态，表示下次循环会进行扩容.
                 else if (!collide)
                     collide = true;
+                // CAS 更新 CounterCell 失败且 counterCells 数小于 CPU 逻辑核心数、无并发竞争
+                // 对 counterCells 进行扩容.
                 else if (cellsBusy == 0 &&
                          U.compareAndSetInt(this, CELLSBUSY, 0, 1)) {
                     try {
@@ -2635,6 +2706,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 }
                 h = ThreadLocalRandom.advanceProbe(h);
             }
+            // 如果 counterCells 未初始化则初始化.
+            // 由于大部分情况下 counterCells 都不会为空, 将判空初始化逻辑放在后面能够提高性能.
             else if (cellsBusy == 0 && counterCells == cs &&
                      U.compareAndSetInt(this, CELLSBUSY, 0, 1)) {
                 boolean init = false;
@@ -2651,6 +2724,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 if (init)
                     break;
             }
+            // 竞争激烈，CounterCell 被其他线程占据更新 baseCount 来计数.
             else if (U.compareAndSetLong(this, BASECOUNT, v = baseCount, v + x))
                 break;                          // Fall back on using base
         }
