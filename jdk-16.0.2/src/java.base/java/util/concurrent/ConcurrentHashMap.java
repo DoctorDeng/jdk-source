@@ -793,6 +793,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
 
     /**
      * The next table to use; non-null only while resizing.
+     * 扩容时的 table.
      */
     private transient volatile Node<K,V>[] nextTable;
 
@@ -1066,10 +1067,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             else {
                 V oldVal = null;
                 // 根据当前数据结构：链表或者红黑树进行不同的入桶(或称为入 bin)操作.
-                // 此处使用 synchronized 锁定链表或红黑树上的第一个节点, 保证链表或红黑树并发插入的正确.
+                // 此处使用 synchronized 锁定链表或红黑树上的头节点, 保证并发插入的正确正确性.
                 synchronized (f) {
                     if (tabAt(tab, i) == f) {
                         // 普通链表操作.
+                        // fh 大于 0 表示节点是普通链表节点.
                         if (fh >= 0) {
                             binCount = 1;
                             for (Node<K,V> e = f;; ++binCount) {
@@ -2334,7 +2336,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     private final Node<K,V>[] initTable() {
         Node<K,V>[] tab; int sc;
         while ((tab = table) == null || tab.length == 0) {
-            // sizeCtl 小于 0 表示其他线程在初始化表, 这便是当前线程通过 CAS 竞争失败, 此时单纯的自旋.
+            // sizeCtl 小于 0 表示其他线程在初始化表, 这意味着当前线程通过 CAS 竞争失败, 此时单纯的自旋.
             // 使用 Thread.yield() 可以减少线程在自旋时的开销.
             if ((sc = sizeCtl) < 0)
                 Thread.yield(); // lost initialization race; just spin
@@ -2373,9 +2375,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
     private final void addCount(long x, int check) {
         CounterCell[] cs; long b, s;
         if ((cs = counterCells) != null ||
+            // 不直接通过 CounterCell 来更新计数而是首先尝试通过更新全局 baseCount 来保存计数, 在低竞争的情况下这样性能更高.
             !U.compareAndSetLong(this, BASECOUNT, b = baseCount, s = b + x)) {
             CounterCell c; long v; int m;
             boolean uncontended = true;
+            // 竞争较高通过 CounterCell 更新计数保证高竞争情况下的性能.
             if (cs == null || (m = cs.length - 1) < 0 ||
                 (c = cs[ThreadLocalRandom.getProbe() & m]) == null ||
                 !(uncontended =
@@ -2387,18 +2391,28 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 return;
             s = sumCount();
         }
+        // 检查扩容逻辑.
         if (check >= 0) {
             Node<K,V>[] tab, nt; int n, sc;
             while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
                    (n = tab.length) < MAXIMUM_CAPACITY) {
+                // 生成一个唯一的扩容戳.
                 int rs = resizeStamp(n) << RESIZE_STAMP_SHIFT;
+                // 已经有其他线程在扩容的逻辑.
                 if (sc < 0) {
+                    // 如下四个条件不帮助扩容直接跳出循环.
+                    // sc == rs + MAX_RESIZER：表示帮助线程已经达到最大值.
+                    // sc == rs + 1：表示扩容已结束.
+                    // nextTable == null：表示扩容已经结束
+                    // transferIndex <=0：表示所有的转移任务(即将旧 table 中的元素移动至扩容后的新 table) 都被领取, 无任务分配给当前线程.
                     if (sc == rs + MAX_RESIZERS || sc == rs + 1 ||
                         (nt = nextTable) == null || transferIndex <= 0)
                         break;
+                    // 增加帮助线程数.
                     if (U.compareAndSetInt(this, SIZECTL, sc, sc + 1))
                         transfer(tab, nt);
                 }
+                // 第一个线程开始扩容的逻辑.
                 else if (U.compareAndSetInt(this, SIZECTL, sc, rs + 2))
                     transfer(tab, null);
                 s = sumCount();
@@ -2478,22 +2492,31 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         // 此处根据 CPU 数确定扩容时的 stride(步进).
         if ((stride = (NCPU > 1) ? (n >>> 3) / NCPU : n) < MIN_TRANSFER_STRIDE)
             stride = MIN_TRANSFER_STRIDE; // subdivide range
-        // nextTab 为 null 则表示.
+        // nextTab 为 null 表示为当前线程为第一个执行扩容的线程.
         if (nextTab == null) {            // initiating
             try {
+                // 创建扩容的数据并赋值给 nextTab.
                 @SuppressWarnings("unchecked")
                 Node<K,V>[] nt = (Node<K,V>[])new Node<?,?>[n << 1];
                 nextTab = nt;
             } catch (Throwable ex) {      // try to cope with OOME
+                // 扩容发生 OOM 处理逻辑.
                 sizeCtl = Integer.MAX_VALUE;
                 return;
             }
             nextTable = nextTab;
             transferIndex = n;
         }
+        // 新 table 长度.
         int nextn = nextTab.length;
+        // 创建一个 ForwardingNode 节点, 表示一个正在被迁移的节点, 其 hash 值为 -1（MOVED）
+        // 该节点用于占位, 告诉其他线程当前节点所在桶已经被迁移.
         ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
+        // 首次推进为 true.
+        // true, 表示需要再次推进一个下标（i--）.
+        // false 不能推进下标，需要将当前的下标处理完毕才能继续推进.
         boolean advance = true;
+        // 判断是否已经扩容完成，完成后退出循环
         boolean finishing = false; // to ensure sweep before committing nextTab
         for (int i = 0, bound = 0;;) {
             Node<K,V> f; int fh;
