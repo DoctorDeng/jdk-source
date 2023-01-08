@@ -2401,14 +2401,14 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             Node<K,V>[] tab, nt; int n, sc;
             while (s >= (long)(sc = sizeCtl) && (tab = table) != null &&
                    (n = tab.length) < MAXIMUM_CAPACITY) {
-                // 生成一个唯一的扩容戳.
+                // 生成一个唯一的扩容戳, 根据当前 table 长度计算获得.
                 int rs = resizeStamp(n) << RESIZE_STAMP_SHIFT;
                 // 已经有其他线程在扩容的逻辑.
                 if (sc < 0) {
                     // 如下四个条件不帮助扩容直接跳出循环.
                     // sc == rs + MAX_RESIZER：表示帮助线程已经达到最大值.
                     // sc == rs + 1：表示扩容已结束.
-                    // nextTable == null：表示扩容已经结束
+                    // nextTable == null：表示扩容已经结束.
                     // transferIndex <=0：表示所有的转移任务(即将旧 table 中的元素移动至扩容后的新 table) 都被领取, 无任务分配给当前线程.
                     if (sc == rs + MAX_RESIZERS || sc == rs + 1 ||
                         (nt = nextTable) == null || transferIndex <= 0)
@@ -2418,6 +2418,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                         transfer(tab, nt);
                 }
                 // 第一个线程开始扩容的逻辑.
+                // 将 sizeCtl 设置扩容戳 + 2, 由于扩容戳根据扩容前表的长度生成, 因此每次扩容时扩容戳具有随机性.
+                // 在 transfer() 扩容逻辑中会根据 sizeCtl 的值来判定本次扩容是否已完成, 由于扩容戳的随机性, 避免 ABA 问题.
                 else if (U.compareAndSetInt(this, SIZECTL, sc, rs + 2))
                     transfer(tab, null);
                 s = sumCount();
@@ -2535,6 +2537,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             //                  bound        i  transferIndex = 8, i = transferIndex - -1
             //                   ↓          ↓
             //  [0] [1] [2] [3] [4] [5] [6] [7]
+
+            // 在 while 循环中确定当前线程要处理的区间.
             while (advance) {
                 int nextIndex, nextBound;
                 if (--i >= bound || finishing)
@@ -2543,7 +2547,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                     i = -1;
                     advance = false;
                 }
-                // 更新 transferIndex 确定当前线程要负责的桶区间.
+                // CAS 更新 transferIndex 确定当前线程要负责的桶区间.
                 else if (U.compareAndSetInt
                          (this, TRANSFERINDEX, nextIndex,
                           nextBound = (nextIndex > stride ?
@@ -2556,30 +2560,36 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             //  处理结束，或者说是没有找到要处理的位置（0 ~ n-1）
             if (i < 0 || i >= n || i + n >= nextn) {
                 int sc;
-                // 如果已结束, 则将 nextTable 置为 null 而 table 执行新的扩容后的表.
+                // 如果已结束, 则将 nextTable 置为 null, 然后将 table 指向新的扩容后的表.
                 if (finishing) {
                     nextTable = null;
                     table = nextTab;
                     sizeCtl = (n << 1) - (n >>> 1);
                     return;
                 }
+                // 多个线程并发转移时每次都会将 sizeCtl 值 + 1, 当转移结束时将该值 - 1
                 if (U.compareAndSetInt(this, SIZECTL, sc = sizeCtl, sc - 1)) {
+                    // 如果扩容已结束则直接退出.
+                    // sizeCtl 扩容初始值 = resizeStamp(n) << RESIZE_STAMP_SHIFT + 2 其中 resizeStamp(n) << RESIZE_STAMP_SHIFT 为扩容戳.
+                    // 当前 sizeCtl 值等于扩容的初始值表示扩容已结束.
                     if ((sc - 2) != resizeStamp(n) << RESIZE_STAMP_SHIFT)
                         return;
                     finishing = advance = true;
+                    // 循环检查整张表.
                     i = n; // recheck before commit
                 }
             }
-            // 如果正在处理的桶为 null，用 ForwardingNode 标记即可, 不做其他处理.
+            // 如果正在处理的桶为 null，直接使用 ForwardingNode 标记, 不做其他处理.
             else if ((f = tabAt(tab, i)) == null)
                 advance = casTabAt(tab, i, null, fwd);
             // 如果桶正在被其他线程处理, 继续向前移动, 确定当前线程要处理的桶区间.
             else if ((fh = f.hash) == MOVED)
                 advance = true; // already processed
             else {
+                // 桶存储元素的转移逻辑.
                 // 锁定桶, 然后对桶进行转移操作, 将桶中的元素转移到 nextTable 中.
                 synchronized (f) {
-                    // 仅在头节点未变动时才执行转移.
+                    // 仅在头节点未变动时才执行转移, 保证并发操作正确性.
                     if (tabAt(tab, i) == f) {
                         Node<K,V> ln, hn;
                         // 处理链表, 和 HashMap 类似， 不过处理后链表节点的顺序有变化.
@@ -2601,11 +2611,11 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                                 hn = lastRun;
                                 ln = null;
                             }
-                            // 同 HashMap 将链表扩容后要分为两个部分:
+                            // 同 HashMap 将链表分为两个部分:
                             // * 扩容后根据 hash 计算出的桶下标位置依然不变的元素.
                             // * 扩容后根据 hash 计算出的桶的下标位置会变动的元素(新位置=原容量+原位置下标).
 
-                            // 转移时创建新的 Node 节点保存旧节点中的数据, 而不是直接变更旧节点这样能够保证并发读的正确性.
+                            // 转移时创建新的 Node 节点组成链表来保存旧节点中的数据, 而不是直接变更旧节点这样能够保证并发读的正确性.
                             for (Node<K,V> p = f; p != lastRun; p = p.next) {
                                 int ph = p.hash; K pk = p.key; V pv = p.val;
                                 if ((ph & n) == 0)
