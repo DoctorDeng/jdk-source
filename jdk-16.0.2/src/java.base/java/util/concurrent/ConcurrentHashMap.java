@@ -2517,13 +2517,16 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
         // 新 table 长度.
         int nextn = nextTab.length;
         // 创建一个 ForwardingNode 节点, 表示一个正在被迁移的节点, 其 hash 值为 -1（MOVED）
-        // 该节点用于占位, 告诉其他线程当前节点所在桶已经被迁移.
+        // 该节点用于占位, 告诉其他线程当前节点所在桶已经被迁移, 后续并发查询时会查询新的表.
         ForwardingNode<K,V> fwd = new ForwardingNode<K,V>(nextTab);
-        // 首次推进为 true.
-        // true, 表示需要再次推进一个下标（i--）.
+
+        // 将旧 table 数据转移到新 table, 并发转移时每个线程负责一部分区间, 转移方向: 从后往前进行.
+
+        // advance 表示是否能够进行推进(转移), 最初为 true.
+        // true  表示可以推进.
         // false 不能推进下标，需要将当前的下标处理完毕才能继续推进.
         boolean advance = true;
-        // 判断是否已经扩容完成，完成后退出循环.
+        // 扩容是否已完成，完成后退出循环.
         boolean finishing = false; // to ensure sweep before committing nextTab
         for (int i = 0, bound = 0;;) {
             Node<K,V> f; int fh;
