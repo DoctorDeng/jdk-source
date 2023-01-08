@@ -801,7 +801,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * Base counter value, used mainly when there is no contention,
      * but also as a fallback during table initialization
      * races. Updated via CAS.
-     * 基本计数器值主要在没有争用时使用, 通过 CAS 更新, 高并发情况下使用 counterCells.
+     * 基本计数器值主要在没有争用时使用, 通过 CAS 更新, 高并发情况下主要使用 {@link #counterCells} 数组.
+     * 表大小(size) = baseCount + {@link #counterCells} 数组中每个 CounterCell 的值
      */
     private transient volatile long baseCount;
 
@@ -812,8 +813,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
      * when table is null, holds the initial table size to use upon
      * creation, or 0 for default. After initialization, holds the
      * next element count value upon which to resize the table.
-     * 表初始化和调整大小控制.
-     * 如果为负, 则表正在初始化或调整大小：-1 用于初始化, 否则为 -(1 + 活动调整大小线程的数量).
+     * 表初始化和扩容控制.
+     * 如果为负, 则表正在初始化或扩容大小：-1 用于初始化, 否则为 -(1 + 活动扩容线程的数量).
      * 另外, 当表为空时，为创建时使用的初始表大小, 或默认为 0.
      * 初始化后, 保存下一个元素计数值, 根据该值调整表的大小.
      */
@@ -821,7 +822,12 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
 
     /**
      * The next table index (plus one) to split while resizing.
-     * 扩容, 将旧表(table)的数据转移到新表(nextTable)时要拆分的下一个表的索引(+1)
+     * 转移索引, 扩容时, 从数组右侧(size -1) -> 左侧(0) 对其中的桶进行转移, transferIndex 用于记录转移中的桶的索引, 示意图如下:
+     *
+     *      未进行转移               转移中或转移完成
+     *  0  ---------- transferIndex -------------------- n-1
+     *                  ↓                               ↓
+     * [0] [1] [2] [3] [4] [5] [6] [7] [8] [9]........ [n - 1]
      */
     private transient volatile int transferIndex;
 
@@ -1122,6 +1128,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 }
             }
         }
+        // 更新计数, 如果需要则进行扩容.
         addCount(1L, binCount);
         return null;
     }
