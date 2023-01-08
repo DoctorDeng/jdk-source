@@ -974,8 +974,12 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                 if ((ek = e.key) == key || (ek != null && key.equals(ek)))
                     return e.val;
             }
+            // eh < 0 表示节点不是普通链表节点, 此时需要根据实际情况进行不同的查找.
+            // 如果为 ForwardingNode 表示正在扩容且该桶已被转移到新表中, 则需要在新表中执行查找.
+            // 如果为红黑树, 则执行红黑树查找.
             else if (eh < 0)
                 return (p = e.find(h, key)) != null ? p.val : null;
+            // 普通链表通过遍历链表查找.
             while ((e = e.next) != null) {
                 if (e.hash == h &&
                     ((ek = e.key) == key || (ek != null && key.equals(ek))))
@@ -2527,8 +2531,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             // nextBound: 确定下一个 bound 的值
 
             // 假定 stride 为 3 即每个线程负责移动 3 个桶.
-            // 执行转移时, 每次 i 向前移动.
-            //                  bound        i  transferIndex = 8
+            // 执行转移时, 每次 i 向前移动, 移动至 bound 处则结束本区间转移, 继续寻找下一个可转移区间.
+            //                  bound        i  transferIndex = 8, i = transferIndex - -1
             //                   ↓          ↓
             //  [0] [1] [2] [3] [4] [5] [6] [7]
             while (advance) {
@@ -2575,6 +2579,7 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
             else {
                 // 锁定桶, 然后对桶进行转移操作, 将桶中的元素转移到 nextTable 中.
                 synchronized (f) {
+                    // 仅在头节点未变动时才执行转移.
                     if (tabAt(tab, i) == f) {
                         Node<K,V> ln, hn;
                         // 处理链表, 和 HashMap 类似， 不过处理后链表节点的顺序有变化.
@@ -2599,6 +2604,8 @@ public class ConcurrentHashMap<K,V> extends AbstractMap<K,V>
                             // 同 HashMap 将链表扩容后要分为两个部分:
                             // * 扩容后根据 hash 计算出的桶下标位置依然不变的元素.
                             // * 扩容后根据 hash 计算出的桶的下标位置会变动的元素(新位置=原容量+原位置下标).
+
+                            // 转移时创建新的 Node 节点保存旧节点中的数据, 而不是直接变更旧节点这样能够保证并发读的正确性.
                             for (Node<K,V> p = f; p != lastRun; p = p.next) {
                                 int ph = p.hash; K pk = p.key; V pv = p.val;
                                 if ((ph & n) == 0)
