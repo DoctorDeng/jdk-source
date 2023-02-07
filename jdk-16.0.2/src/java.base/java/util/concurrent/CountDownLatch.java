@@ -171,6 +171,10 @@ public class CountDownLatch {
         }
 
         protected int tryAcquireShared(int acquires) {
+            // 注：tryAcquireShared 方法返回值大于等于 0 表示共享模式获取锁成功.
+            // 在 Latch 中默认情况下共享状态不为 0 线程需要进行等待
+            // 调用 countDown 方法会将共享状态值 -1 为 0 时会唤醒在 Latch 上等待的线程.
+            // 此时被唤醒的线程调用 tryAcquireShared 时会获取共享锁成功.
             return (getState() == 0) ? 1 : -1;
         }
 
@@ -178,6 +182,7 @@ public class CountDownLatch {
             // Decrement count; signal when transition to zero
             for (;;) {
                 int c = getState();
+                // 释放时, 每次将值 -1 直到为 0, 表示要唤醒在 Latch 上等待的线程.
                 if (c == 0)
                     return false;
                 int nextc = c - 1;
@@ -229,6 +234,7 @@ public class CountDownLatch {
      *         while waiting
      */
     public void await() throws InterruptedException {
+        // 进行等待, 只有调用 countDown() 方法将共享状态调整为 0 后才会被唤醒.
         sync.acquireSharedInterruptibly(1);
     }
 
@@ -289,6 +295,8 @@ public class CountDownLatch {
      * <p>If the current count equals zero then nothing happens.
      */
     public void countDown() {
+        // 将共享状态变量值 -1, 如果为 0 则将在当前 Latch 上等待的线程唤醒.
+        // 唤醒模式并不是一次性将所有线程一次性唤醒, 在 CLH 队列等待的线程, 会从头 -> 尾逐个被唤醒.
         sync.releaseShared(1);
     }
 
