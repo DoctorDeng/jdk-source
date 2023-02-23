@@ -148,6 +148,13 @@ public class CyclicBarrier {
      * There need not be an active generation if there has been a break
      * but no subsequent reset.
      */
+    /**
+     * 屏障的每次使用都表示为生成 Generation 实例.
+     * 每当屏障跳闸(即所有线程都到达屏障点)或重置时，Generation 就会发生变化.
+     * 由于锁可能分配给等待线程的方式不确定性，使用屏障的线程可能会有许多代关联，
+     * 但一次只能激活其中一个线程（计数适用的线程），其余的线程要么断开，要么跳闸。
+     * 如果发生中断但没有后续重置，则无需激活生成.
+     */
     private static class Generation {
         Generation() {}                 // prevent access constructor creation
         boolean broken;                 // initially false
@@ -156,12 +163,16 @@ public class CyclicBarrier {
     /** The lock for guarding barrier entry */
     private final ReentrantLock lock = new ReentrantLock();
     /** Condition to wait on until tripped */
+    // 让线程等待直到屏障跳闸(tripped)的条件变量(Condition)
     private final Condition trip = lock.newCondition();
     /** The number of parties */
+    // 在屏障跳闸之前必须调用等待的线程数.
     private final int parties;
+    // 屏障跳闸时要运行的任务.
     /** The command to run when tripped */
     private final Runnable barrierCommand;
     /** The current generation */
+    // 当前代.
     private Generation generation = new Generation();
 
     /**
@@ -169,14 +180,17 @@ public class CyclicBarrier {
      * on each generation.  It is reset to parties on each new
      * generation or when broken.
      */
+    // 当前等待的线程数.
     private int count;
 
     /**
      * Updates state on barrier trip and wakes up everyone.
      * Called only while holding lock.
      */
+    // 更新屏障行程状态并唤醒所有线程. 仅在保持锁定时调用.
     private void nextGeneration() {
         // signal completion of last generation
+        // 唤醒在条件变量上等待的所有线程.
         trip.signalAll();
         // set up next generation
         count = parties;
@@ -199,11 +213,12 @@ public class CyclicBarrier {
     private int dowait(boolean timed, long nanos)
         throws InterruptedException, BrokenBarrierException,
                TimeoutException {
+        // 获取锁.
         final ReentrantLock lock = this.lock;
         lock.lock();
         try {
             final Generation g = generation;
-
+            // 判断屏障是否已终结, 如果是则抛出异常.
             if (g.broken)
                 throw new BrokenBarrierException();
 
@@ -211,26 +226,31 @@ public class CyclicBarrier {
                 breakBarrier();
                 throw new InterruptedException();
             }
-
+            // 将计数值 -1.
             int index = --count;
+            // 计数值为 0 表示所有线程已到达屏障点, 此时需要运行指定任务，并重置屏障状态开始下一轮循环.
             if (index == 0) {  // tripped
                 Runnable command = barrierCommand;
                 if (command != null) {
                     try {
                         command.run();
                     } catch (Throwable ex) {
+                        // 任务运行异常时要破坏屏障.
                         breakBarrier();
                         throw ex;
                     }
                 }
+                // 开始下一轮循环.
                 nextGeneration();
                 return 0;
             }
 
+            // 循环等待直到发生屏障跳闸、总结、超时等.
             // loop until tripped, broken, interrupted, or timed out
             for (;;) {
                 try {
                     if (!timed)
+                        // 在条件变量上等待, 直到到达屏障点.
                         trip.await();
                     else if (nanos > 0L)
                         nanos = trip.awaitNanos(nanos);
