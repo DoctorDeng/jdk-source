@@ -310,17 +310,30 @@ public class StampedLock implements java.io.Serializable {
     private static final long serialVersionUID = -6001602636862214147L;
 
     /** The number of bits to use for reader count before overflowing */
+    // 溢出前用于读取器计数的位数.
     private static final int LG_READERS = 7; // 127 readers
 
+    // 锁状态和邮戳(stamp)操作的值.
     // Values for lock state and stamp operations
+    //                                                     <--- ABITS(8 bit, BITS | WBIT)-->
+    //                                                       <--- RBITS(7 bit, WBIT -1)---->
+    //  <----------SBITS(57 bit, 含 WBIT) ---------------->
+    //  [-------------------------------------------------|-| -----------------------------] 
+    //                                                   ↑ 
+    //                                               WBIT(1 bit, 1L<<7)
+    /*
+     *  运算符：
+     *   |	或运算，如果相对应位都是 0，则结果为 0，否则为 1
+     *   ~  按位取反运算符翻转操作数的每一位，即 0 变成 1，1 变成 0
+     */
     private static final long RUNIT = 1L;
-    private static final long WBIT  = 1L << LG_READERS;
-    private static final long RBITS = WBIT - 1L;
-    private static final long RFULL = RBITS - 1L;
-    private static final long ABITS = RBITS | WBIT;
-    private static final long SBITS = ~RBITS; // note overlap with ABITS
+    private static final long WBIT  = 1L << LG_READERS; // 值 128, 格式: 1000 0000
+    private static final long RBITS = WBIT - 1L;        // 值 127, 格式: 0111 1111
+    private static final long RFULL = RBITS - 1L;       // 值 126, 格式: 0111 1110
+    private static final long ABITS = RBITS | WBIT;     // 值 255, 格式: 1111 1111
+    private static final long SBITS = ~RBITS; // note overlap with ABITS 值 -128, 格式: 100000... 1000 0000
     // not writing and conservatively non-overflowing
-    private static final long RSAFE = ~(3L << (LG_READERS - 1));
+    private static final long RSAFE = ~(3L << (LG_READERS - 1));      // 值 -193, 格式 10000...  1100 0001
 
     /*
      * 3 stamp modes can be distinguished by examining (m = stamp & ABITS):
@@ -336,12 +349,15 @@ public class StampedLock implements java.io.Serializable {
      */
 
     /** Initial value for lock state; avoids failure value zero. */
+    // 锁状态初始值, 值为 256, 避免故障值为零.
     private static final long ORIGIN = WBIT << 1;
 
     // Special value from cancelled acquire methods so caller can throw IE
+    // 来自取消的 acquire 方法的特殊值，因此调用者可以抛出异常.
     private static final long INTERRUPTED = 1L;
 
     // Bits for Node.status
+    // 节点状态: 等待或取消.
     static final int WAITING   = 1;
     static final int CANCELLED = 0x80000000; // must be negative
 
